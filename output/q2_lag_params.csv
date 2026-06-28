@@ -1,0 +1,5 @@
+Variable,Optimal_Lag_Step,Optimal_Lag_Hours,Max_CCF
+RW_NTU,2,4,0.2904
+RW_PH,0,0,-0.063
+ALUM,1,2,-0.126
+RW_FLOW,6,12,-0.0642

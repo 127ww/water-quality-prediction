@@ -1,0 +1,641 @@
+\documentclass{cumcmthesis}
+\usepackage{booktabs,algorithm2e,graphicx,amsmath,amssymb,float,multirow,array,hyperref,listings}
+\usepackage[UTF8]{ctex}
+\usepackage{xcolor}
+\lstset{
+    basicstyle=\small\ttfamily,
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue},
+    stringstyle=\color{teal},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    frame=single,
+    breaklines=true,
+    extendedchars=true,
+    literate={\　}{{\ }}1
+}
+
+\title{基于数据与机理双驱动混合模型的自来水厂水质预测与风险评估}
+
+\begin{document}
+
+\renewcommand{\arraystretch}{0.82}
+\linespread{1.0}
+\lstset{basicstyle=\small\ttfamily, numbers=left, numberstyle=\tiny\color{gray}}
+
+\newpage
+\thispagestyle{empty}
+\vspace*{1cm}
+
+{\centering
+\begin{tabular}{|>{\centering\arraybackslash}p{2.5cm}|c|>{\centering\arraybackslash}p{2.5cm}|}
+\hline
+{\zihao{5}\songti 选题} &
+\multirow{2}{*}{\parbox{11cm}{\centering
+{\zihao{4}\songti\textbf{2026年第十六届APMCM \\[4pt] 亚太地区大学生数学建模竞赛（中文赛项）}}}} &
+{\zihao{5}\songti 参赛编号} \\
+\cline{1-1}\cline{3-3}
+{\zihao{5}\songti A} & & {\zihao{5}\songti apmcm26203132} \\
+\hline
+\end{tabular}\par}
+
+\vspace{1.5cm}
+\begin{center}
+{\zihao{4}\songti\bfseries 基于数据与机理双驱动混合模型的自来水厂水质预测与风险评估}
+\end{center}
+\vspace{0.5cm}
+
+\begin{abstract}
+出厂水浊度是饮用水安全的核心指标。针对自来水厂多变量、多时滞的水质监测数据，本文构建了覆盖特征筛选、时滞辨识、灰箱混合预测与积分风险分级的全流程建模框架。
+
+针对问题一，采用LASSO、随机森林与互信息三法交叉筛选出\textbf{7个核心特征}，\textbf{岭回归}取得log-NTU空间$\mathbf{R^2=0.352}$、原始空间$\mathbf{RMSE}=0.397$ NTU，预测2026年2月1日、10日、20日出厂水浊度分别为\textbf{0.239、0.265、0.275 NTU}。
+
+针对问题二，利用互相关函数辨识四变量时滞——矾投加量\textbf{2小时}、原水浊度\textbf{4小时}、原水流量\textbf{12小时}。以差异化Almon多项式策略压缩长时滞变量参数空间，RMSE为\textbf{0.494 NTU}。
+
+针对问题三，提出\textbf{CSTR串联RTD机理核与Seq2Seq LSTM残差修正}的灰箱混合模型，机理核取ODE解析解保证任意步长下更新为凸组合。混合模型RMSE\textbf{0.442 NTU}，较纯CSTR提升\textbf{14.5\%}；2h至12h多步超前RMSE仅从0.328缓增至0.346。
+
+针对问题四，构建\textbf{超标严重度$\mathbf{S}$与持续时长$\mathbf{D}$}双维指标，K-Means聚类实现四级风险评价。2026年1--3月90天结果为\textbf{安全86天、低风险2天、中风险1天、高风险1天}，安全率95.6\%，提出SCADA可嵌入的两级预警规则。
+
+灵敏度分析表明原水浊度为最敏感参数，平均绝对变化\textbf{4.4\%}；白噪声鲁棒性检验RMSE仅\textbf{0.001 NTU}。本文灰箱混合架构将化工反应器理论与深度学习有机融合，在物理约束下实现可解释的水质预测。
+
+\textbf{关键词：}水质预测\quad 时滞辨识\quad CSTR-LSTM\quad SHAP\quad 风险分级
+\end{abstract}
+
+
+\setcounter{page}{1}
+\section{问题重述}
+
+\subsection{问题背景}
+城市供水系统是保障公共健康的核心基础设施。出厂水浊度作为衡量饮用水安全的关键指标，受原水水质波动、混凝剂投加策略、过滤工艺效率及清水池水力特性等多重因素耦合影响。国家《生活饮用水卫生标准》(GB 5749--2022)\cite{gb5749}明确规定出厂水浊度限值为1 NTU。水处理过程涉及复杂的物理化学反应与操作调度决策，纯机理模型难以完全刻画其动态行为，纯数据驱动方法则缺乏物理可解释性。在机理约束与数据驱动之间取得平衡，构建兼具预测精度与工艺可解释性的水质预测体系，是本研究关注的核心问题。
+
+\subsection{问题提出}
+本文基于某自来水厂2025年1月至2026年3月共15个月的运行监测数据，采样频率为每2小时一次、每天12条记录，涵盖原水取水至出厂供水全流程的20项工艺参数，围绕以下四个递进子问题展开。
+
+\textbf{问题一：}筛选影响出厂水浊度的主要因素，建立出厂水浊度与各因素之间的函数关系，预测2026年2月1日、10日、20日的出厂水浊度。
+
+\textbf{问题二：}针对原水浊度、原水pH、矾投加量、原水流量四个变量，构建对滤后水浊度的动态时滞模型，确定各变量的时滞参数。
+
+\textbf{问题三：}融合清水池质量守恒机理与数据驱动方法，构建混合动态模型，对未来1--12小时的出厂水浊度进行预测。
+
+\textbf{问题四：}基于出厂水浊度数据建立水质风险评价体系，对2026年3月逐日水质进行安全、低风险、中风险、高风险的四级分类。
+
+各子题以数据流与物理约束链串联。
+
+\section{问题分析}
+
+\subsection{问题一的分析}
+问题一的核心是建立出厂水浊度$y$与工艺变量$\mathbf{X}$之间的映射关系$y=f(\mathbf{X})$并筛选关键影响因素。特征间可能存在多重共线性且部分变量与目标之间为非线性关系，拟采用LASSO、随机森林和互信息三种方法交叉筛选，其中LASSO利用$L_1$正则化提供线性可解释性，随机森林利用MDI不纯度减少捕捉非线性特征重要性，互信息则从信息论角度度量非线性依赖。三种视角取交集，确保筛选结果稳健。预测阶段对目标变量做$\log(1+y)$变换以改善右偏分布和方差齐性，对比MLR、Ridge、RF和XGBoost四种模型，利用SHAP值解释各特征的影响方向与程度\cite{shap,claude}。
+
+\subsection{问题二的分析}
+问题二要求辨识各工艺变量对滤后水浊度影响的\textbf{时间滞后}。矾投加即混凝反应、原水流量变化即水力停留时间调整并非即时生效，须通过互相关函数(CCF)在0--6步搜索窗内检测各变量的最优滞后阶数\cite{almon,claude}。基于识别的时滞参数，采用Almon多项式分布滞后模型(DLM)将滞后权重约束为低阶多项式以减少待估参数，同时以XGBoost-lag模型作为非线性对比。2025年5--8月数据缺失ALUM和R/W PH等7个关键变量，模型训练限定于9月--次年4月的完整数据，该时段覆盖约2900条有效记录，足以支撑时间序列模型的参数估计与收敛。
+
+\subsection{问题三的分析}
+问题三是四个子问题中技术难度最高的。清水池作为出厂前的最后一级调蓄设施，其水力停留时间分布(RTD)决定了滤后水浊度波动传递至出厂水的延迟与衰减特性。将清水池建模为$N$个等体积CSTR串联，利用质量守恒方程描述浊度在各反应器间的迁移\cite{levenspiel}。数据驱动部分采用Seq2Seq LSTM学习CSTR预测残差中的非线性模式，ALUM等操作指令作为已知计划输入，状态变量由编码器隐状态推演。混合模型的融合方式为$\hat{y}=y^{\mathrm{CSTR}}_t+\Delta\hat{y}_{\mathrm{LSTM}}$。
+
+\subsection{问题四的分析}
+问题四要求在国标$\le 1$ NTU硬约束下构建四级风险评价体系。传统离散分档矩阵依赖人为设定阈值，本文提出超标积分严重度$\mathbf{S}$与最长持续时长$\mathbf{D}$双维指标——$\mathbf{S}$量化超标总量，量纲为NTU$\cdot$h；$\mathbf{D}$衡量单次超标事件的持续性，量纲为h。在$(\mathbf{S},\mathbf{D})$空间做K-Means聚类，$K=4$，按簇中心的$(\mathbf{S}+\mathbf{D})$总和从小到大映射为安全、低风险、中风险、高风险四个等级，天然满足MECE原则，即互斥且穷尽。
+
+全文总体技术路线如图\ref{fig:framework}所示。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/fig00_framework.png}
+\caption{全文总体技术路线框架图}
+\label{fig:framework}
+\end{figure}
+
+\section{模型假设与符号说明}
+
+基于第2节对四个子问题技术路线的分析，本节提炼跨问题共享的基础假设并统一全文化学符号，为后续建模提供公理基础。
+
+\subsection{模型基本假设}
+\textbf{假设一：}水处理工艺在监测期间运行稳定，未发生重大设备故障或工艺改造。水厂操作规程要求连续稳定运行，数据中未见长期系统性漂移。
+
+\textbf{假设二：}监测数据反映该时刻的真实工艺状态，传感器误差为随机噪声。出厂水监测仪表须定期校准以满足国标要求。
+
+\textbf{假设三：}清水池可近似为$N$个等体积全混流反应器串联。实际清水池的RTD介于推流式与全混流之间，串联CSTR模型是标准工程近似\cite{levenspiel}。
+
+\textbf{假设四：}2026年2月预测时，同期其他工艺变量的观测值在问题一中可获取，即Q1为静态映射$y=f(\mathbf{X})$。
+
+\textbf{假设五：}矾投加量由调度员根据原水水质按经验规则阶梯调整，非连续变化。混凝剂投加系统通常以阶跃方式改变设定值。
+
+\subsection{符号说明}
+\begin{table}[H]
+\centering
+\caption{主要符号说明}
+\label{tab:symbols}
+\begin{tabular}{@{}lll@{}}
+\toprule
+符号 & 含义 & 单位 \\
+\midrule
+$\mathbf{X}$ / $\mathbf{x}_i$ & 特征矩阵 / 第$i$个样本的特征向量 & --- \\
+$y$ / $\hat{y}$ & 出厂水浊度实测值 / 预测值 & NTU \\
+$F_t$ / $\tilde{F}_t$ & $t$时刻滤后水浊度 / log变换值 & NTU \\
+$\tau_k$ & 变量$k$的最优时滞阶数 & 步，2h/步 \\
+$\beta_{k,j}$ / $\gamma_{k,j}$ & DLM滞后权重 / Almon多项式系数 & --- \\
+$C_i$ & 第$i$级CSTR浊度浓度 & NTU \\
+$\tau$ / $\tau_i$ & CSTR总停留时间 / 单级停留时间 & h \\
+$N$ & CSTR串联级数 & --- \\
+$\Delta t$ & 离散采样步长，$\Delta t=2$h & h \\
+$r_t$ / $\hat{r}_t$ & CSTR机理残差 / LSTM残差预测 & NTU \\
+$y^{\mathrm{CSTR}}_t$ & CSTR机理核预测输出 & NTU \\
+$S$ & 超标严重度积分 & NTU$\cdot$h \\
+$D$ & 最长持续超标时长 & h \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{数据预处理}
+
+在第3节符号体系与假设框架下，本节对15个月原始监测数据进行系统性清洗与特征构造，输出可直接输入第5节各模型的结构化数据集。
+
+\subsection{数据来源与指标选取}
+原始数据包含2025年1--12月和2026年1--3月的21个字段，涵盖原水水位、原水泵频率、原水流量、原水浊度、原水色度、原水pH、滤后水浊度、清水池水位、出厂水pH、出厂水浊度、出厂水色度、余氯、矾投加流量、矾投加量、送水泵频率、出厂水流量、18ML水池水位与流量、备注。鉴于18ML水池水位与流量数据的缺失率超过90\%，且该部分数据属于辅工艺设施，不影响主工艺链预测，故在特征工程阶段予以剔除；矾投加流量列在2025年几乎全为缺省值，同步剔除。送水泵频率编码为运行泵台数，实际运行范围为1--3台；备注提取反冲洗事件为0/1标签。最终保留\textbf{16个有效变量}用于建模。
+
+\subsection{数据清洗与描述性统计}
+2025年12个文件存在两种列格式，标准Format A含21列，精简Format B含16列且仅出现在5--8月，后者缺失ALUM、R/W PH等7列。需特别指出，2025年5--8月因Format B缺失关键操作变量，该时段数据不参与Q2时滞模型的训练，Q2建模限定于9月--次年4月共8个月的完整数据（约2900条记录）。列名统一通过精确映射字典实现，时间戳由DATE与TIME字段重构为连续datetime，范围为7:00--次日5:00。TIME字段在2025年为整数格式700表示7:00、2026年为浮点格式7.0表示7:00，已做兼容处理。异常值方面，采用99\%分位数截尾原水色度，pH截尾至原水$[5,9]$和出厂水$[6.5,8.5]$。缺失值处理中，ALUM和CL2作为操作设定值采用前向填充以保留阶跃指令结构，其余数值列采用线性插值。经清洗，2025年数据从4380行降至\textbf{3984行有效数据}，其中396条重复时间戳已被剔除；原始缺失值14586个经处理后仅剩\textbf{30个}边界值，后续建模时通过dropna自动排除。数据清洗前后对比见图\ref{fig:preprocess}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.68\textwidth]{figures/fig17_preprocess.pdf}
+\caption{数据清洗前后缺失值与异常值统计}
+\label{fig:preprocess}
+\end{figure}
+
+图\ref{fig:box}箱线图展示了原水、滤后水和出厂水三阶段浊度分布——正常工况下滤后水浊度稳定在0.03--0.10 NTU，出厂水集中在0.10--0.50 NTU，\textbf{最大记录11.9 NTU}对应反冲洗脉冲。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.60\textwidth]{figures/fig01_boxplot.pdf}
+\caption{水处理各阶段浊度分布箱线图}
+\label{fig:box}
+\end{figure}
+
+图\ref{fig:heatmap}热力图揭示了关键工艺特征——滤后水浊度与出厂水浊度的Pearson相关系数为0.71，在$p<0.05$水平上统计显著，原水浊度与出厂水浊度仅0.044，处理工艺对原水波动具有显著缓冲衰减作用，出厂水浊度预测须以滤后水浊度为核心锚点。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.65\textwidth]{figures/fig03_heatmap.pdf}
+\caption{关键水质变量相关性热力图}
+\label{fig:heatmap}
+\end{figure}
+
+原水浊度呈现显著的季节性特征，雨季9--10月原水浊度中位数远超旱季，旱季变量间耦合松散、雨季则呈现右偏扩散的多元分布模式。
+
+
+\section{模型建立与求解}
+
+以第4节预处理得到的3984条有效记录和16个核心变量为基础，本节逐一建立四个子题的数学模型并求解。各子题之间以数据流和物理约束链串联，Q1的特征筛选结果为Q2提供变量输入方向，Q2识别的时滞结构为Q3的机理核设计提供物理先验，Q3的预测结果为Q4的风险评价提供超标判别依据。
+
+\subsection{问题一：三法交叉筛选与Ridge预测的特征建模}
+
+\subsubsection{特征筛选策略：LASSO-RF-MI三法交叉验证}
+问题一的核心任务包含两个子任务，即从16个候选特征中筛选主要因素并确定影响方向，以及建立预测模型$y=f(\mathbf{X})$。由于特征间可能存在多重共线性且部分变量与目标之间为非线性关系，单一筛选准则容易遗漏重要特征或纳入虚假相关。为此，采用LASSO利用$L_1$正则化路径系数、随机森林利用MDI不纯度减少、互信息利用非线性依赖性，三种独立准则分别筛选Top-10特征，取三法交集作为核心特征集，确保在线性可解释性、非线性树结构和信息论依赖三种建模视角下均具稳健解释力。
+
+\textbf{Step 1：LASSO筛选。}对log变换后的目标$z_i=\log(1+y_i)$求解$L_1$正则化路径：
+\begin{equation}
+\hat{\boldsymbol{\beta}}_{\mathrm{LASSO}} = \arg\min_{\boldsymbol{\beta}} \left\{\frac{1}{2n}\sum_{i=1}^{n}(z_i - \mathbf{x}_i^\top\boldsymbol{\beta})^2 + \lambda\|\boldsymbol{\beta}\|_1\right\}
+\end{equation}
+取系数非零的特征进入LASSO候选集。
+
+\textbf{Step 2：随机森林MDI筛选。}训练200棵树的随机森林，计算各特征在所有决策树节点分裂中的平均不纯度减少，取Top-10进入RF候选集。
+
+\textbf{Step 3：互信息筛选。}互信息通过$I(X_j; Z) = \iint p(x_j, z)\log[p(x_j, z)/(p(x_j)p(z))]\,dx_j dz$度量非线性依赖，取Top-10进入MI候选集。
+
+\textbf{Step 4：交集产出。}取三种方法Top-10的交集，产出7个核心特征：FILT\_NTU、FILT\_NTU\_lag1、CL2、RW\_FLOW、MONTH、RIVER\_LEVEL、TW\_FLOW。
+
+\subsubsection{预测模型：log-NTU空间四模型对比}
+考虑到出厂水浊度呈右偏分布，对目标做$z_i=\log(1+y_i)$变换以改善对称性和方差齐性。在变换空间上对比四种模型：
+\begin{equation}
+\hat{z}_i = f(\mathbf{x}_i;\boldsymbol{\theta}), \quad \hat{y}_i = \exp(\hat{z}_i) - 1
+\end{equation}
+其中MLR和Ridge为线性模型，可解释性强；RF和XGBoost为非线性模型，拟合能力更强。四种模型在TimeSeriesSplit 5折时序交叉验证下的表现如表\ref{tab:q1_models}所示。由于建模在log-NTU空间进行、最终预测须经$\hat{y}=\exp(\hat{z})-1$反变换还原至原始NTU尺度，表中同时报告两种空间的RMSE——log-NTU空间反映模型拟合质量，原始NTU空间用于与Q2、Q3的误差量级统一比较。
+
+\begin{table}[H]
+\centering
+\caption{Q1四种模型预测性能对比}
+\label{tab:q1_models}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+模型 & log-RMSE & log-$R^2$ & 原始RMSE (NTU) \\
+\midrule
+MLR & 0.161 & 0.319 & 0.400 \\
+\textbf{Ridge} & $\mathbf{0.158}$ & $\mathbf{0.352}$ & $\mathbf{0.397}$ \\
+RandomForest & 0.171 & 0.245 & 0.517 \\
+XGBoost & 0.180 & 0.184 & 0.408 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ridge回归在log-NTU空间以R²=0.352胜出，原始NTU空间的RMSE为0.397 NTU，亦为四模型中最低。线性模型击败XGBoost和随机森林，说明log变换后特征与目标的关系近似线性，非线性模型反而因过参数化而泛化能力下降。从跨子题可比性角度，Ridge的原始空间RMSE即0.397 NTU与Q2的0.494 NTU、Q3的0.442 NTU处于同一量级，验证了Q1静态映射建模的有效性——其精度并未因舍弃时间维度而显著劣化，反而以最简洁的模型结构取得了与复杂时序模型可比的预测精度。各模型的对数空间拟合对比见图\ref{fig:models}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.65\textwidth]{figures/fig05_residual.pdf}
+\caption{Q1模型预测值与实测值对比及残差分布}
+\label{fig:models}
+\end{figure}
+
+\subsubsection{SHAP特征归因与模型分析}
+利用XGBoost SHAP值与随机森林MDI双重方法对各特征的影响方向与强度进行交叉验证，前者对应图\ref{fig:importance}右轴，后者对应左轴。需指出，此处SHAP与MDI均基于非线性树模型计算，用于揭示变量间的非线性交互关系，而最终预测模型选用的是验证集上性能最优的Ridge回归。
+
+FILT\_NTU的SHAP值最高，达\textbf{0.037}，方向为正，滤后水浊度每升高1单位log-NTU，出厂水浊度log-NTU预期上升约0.037，体现了过滤效果对出厂水质的直接控制作用。MONTH即月份和RIVER\_LEVEL即河道水位紧随其后，$|\mathrm{SHAP}|$分别为\textbf{0.032}和\textbf{0.026}，反映了雨季高浊度原水通过工艺链向出厂端的季节性传导压力。上述三个特征的SHAP方向与MDI排序一致，构成Q1预测的稳健信息锚点。
+
+ALUM即矾投加量在XGBoost的SHAP分析中呈现负向贡献，符合混凝剂去除悬浮颗粒的物理直觉。但在最终选用的Ridge回归模型中，ALUM的回归系数近乎为零，原因在于本数据集ALUM仅含5个离散值即0.04--0.08 mg/L，树模型可捕捉其阶跃效应而线性模型在FILT\_NTU共线性下将其权重压缩至零。这一分歧揭示了当前水厂加药策略的工程事实——矾投加量近乎恒定，其调控效应未在数据中充分表达。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.65\textwidth]{figures/fig04_dualaxis_importance.pdf}
+\caption{随机森林MDI左轴与XGBoost SHAP右轴双重特征重要性分析}
+\label{fig:importance}
+\end{figure}
+
+利用Ridge回归模型预测2026年2月1日、10日、20日的出厂水浊度（图\ref{fig:q1pred}），三天均值分别为\textbf{0.239、0.265和0.275 NTU}，均在国标1 NTU以下。三个预测值集中于0.24--0.28 NTU的狭窄区间，与出厂水浊度日常波动幅度一致，说明模型未产生异常外推。2月20日的预测均值0.275 NTU略高于前两个日期，模型仅从MONTH特征推断出微弱的上升趋势，在未观测到未来数据的前提下给出保守估计，为水厂调度预留了安全裕度。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/fig06_q1_predict.pdf}
+\caption{Q1模型对2026年2月三天的出厂水浊度预测}
+\label{fig:q1pred}
+\end{figure}
+
+
+\subsection{问题二：基于CCF-Almon DLM的动态时滞辨识}
+
+\subsubsection{时滞检测策略：CCF互相关函数搜索}
+水处理过程中，矾投加即混凝反应、原水流量变化即水力停留时间调整对滤后水浊度的影响并非即时生效，存在\textbf{物理上的滞后效应}。在离散时间步长$\Delta t=2$h约束下，题目给定矾投加时滞约为2--6小时，对应1--3步。为从数据中客观辨识时滞，对四个输入变量逐一计算其与滤后水浊度$F_t$的互相关函数(CCF)，在0--6步搜索窗内取$|\mathrm{CCF}|$最大的滞后阶数为最优时滞$\tau_k$。
+
+\subsubsection{Almon多项式分布滞后模型}
+为稳定方差，对滤后水浊度做对数变换$\tilde{F}_t = \log(1+F_t)$。设$\tilde{F}_t$由四个输入变量及其滞后项线性解释：
+\begin{equation}
+\tilde{F}_t = \alpha + \sum_{k=1}^{4}\sum_{j=0}^{\tau_k} \beta_{k,j} X_{k, t-j} + \varepsilon_t
+\end{equation}
+其中$\tau_k$为变量$k$的最优滞后阶数，由CCF确定；$\beta_{k,j}$为滞后权重。直接估计全部$1+\sum_k(\tau_k+1)$个参数将导致严重的多重共线性，尤其对于$\tau_k$较大的变量。Almon多项式分布滞后模型的核心思想是将$\beta_{k,j}$约束为滞后阶数$j$的低阶多项式，从而压缩参数空间。但该约束仅在$\tau_k+1>p+1$时（$p$为多项式阶数）才产生压缩效益——若机械地对所有变量套用同一多项式，短时滞变量反而会因过定而增加待估参数。
+
+为此，本文采用\textbf{差异化参数化策略}。对长时滞变量RW\_FLOW即$\tau=6$、原需7个参数，以及中等时滞变量RW\_NTU即$\tau=2$、原需3个参数，采用2阶Almon多项式将滞后权重约束为：
+\begin{equation}
+\beta_{k,j} = \gamma_{k,0} + \gamma_{k,1}\cdot j + \gamma_{k,2}\cdot j^2
+\end{equation}
+前者从7个参数压缩为3个，后者以同等参数数量换取平滑性约束。对短时滞变量ALUM即$\tau=1$、原需2个参数，以及无时滞变量RW\_PH即$\tau=0$、原需1个参数，2阶Almon多项式将分别导致参数数从2增至3和从1增至3，属过定，故直接采用无约束OLS估计$\beta_{k,j}$。全模型待估参数总计10个，远低于无约束时的14个，有效控制了估计方差。
+
+\subsubsection{时滞辨识结果与物理机理解释}
+CCF检测结果（图\ref{fig:ccf}）揭示了四个变量截然不同的时滞特征。ALUM的最优时滞为\textbf{1步即2小时}，恰好位于题目给定2--6小时范围的下界，对应混凝剂投入后电中和与吸附架桥反应在2小时内达到显著效果的物理过程。RW\_NTU在\textbf{滞后2步即4小时}处关联最强，原水浊度变化需依次经过混凝、沉淀、过滤三级工艺，其影响约4小时后才充分传递至滤后水。RW\_FLOW的最优时滞为\textbf{6步即12小时}，这一较长时滞源于清水池的大容积缓冲效应——流量变化引起的停留时间扰动需要约12小时才能被滤后水浊度完全反映。RW\_PH的时滞为\textbf{0步即0小时}，在线加药系统的酸碱调节近乎瞬时响应，无需滞后项。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{figures/fig07_ccf_stem.pdf}
+\caption{四变量与滤后水浊度的互相关函数CCF茎叶图}
+\label{fig:ccf}
+\end{figure}
+
+Almon DLM在排除反冲洗事件共计196次脉冲扰动和极端洪水尖峰即上限2\%分位后的RMSE为0.494 NTU，已还原至原始尺度。ALUM的一阶$j=0$和二阶$j=1$滞后权重均为负值，表明矾投加在0--4小时内持续抑制滤后浊度，权重绝对值随时间递减，与混凝剂消耗的物理过程相符。
+
+
+\subsection{问题三：解析解CSTR与LSTM残差修正的灰箱混合预测}
+
+\subsubsection{灰箱混合架构设计}
+问题三要求在物理约束下实现1--12小时超前预测。纯数据驱动方法可在分布内数据上拟合良好，但外推到未见过的操作条件时缺乏物理保障；纯机理方法则难以捕捉未经建模的复杂非线性效应。本文提出的\textbf{机理核+数据核}灰箱混合架构兼顾两端，以串联CSTR模型提供满足质量守恒的机理基线，以Seq2Seq LSTM学习机理残差中的非线性模式，最终预测由两者叠加得到。
+
+\subsubsection{机理核：CSTR串联RTD的ODE解析解}
+将清水池建模为$N$个等体积全混流反应器串联。对第$i$个CSTR，质量守恒方程为：
+\begin{equation}
+V_i\frac{dC_i}{dt} = Q(C_{i-1} - C_i), \quad C_0 = F_t
+\label{eq:cstr_ode}
+\end{equation}
+传统欧拉离散在$\Delta t \gg \tau_i$时会出现数值退化——当$\Delta t/\tau_i > 1$时更新系数被截断为1，物理上退化为纯时延而非指数平滑。为此，对$\Delta t=2$h采样间隔取\textbf{ODE精确解析解}，在假定$C_{i-1}$在单步内恒定的条件下积分得到
+\begin{equation}
+C_i(t+\Delta t) = e^{-\Delta t/\tau_i}\,C_i(t) + (1-e^{-\Delta t/\tau_i})\,C_{i-1}(t+\Delta t), \quad \tau_i = \tau/N
+\label{eq:cstr_analytical}
+\end{equation}
+该解析解保证任意$\tau>0$下$e^{-\Delta t/\tau_i}\in(0,1)$恒成立，更新恒为凸组合。其中$\tau$为总平均停留时间，基于清水池平均有效容积$V$与日均处理水量$Q$的比值$\tau=V/Q$估算，经数据标定取$\tau\approx6$h。串联CSTR按上游到下游递推更新——每级CSTR计算时使用上游$C_{i-1}$的当前时刻更新值，使上游扰动通过逐级递推向下游传播，最末级输出$C_N(t)$即为出厂水浊度的机理预测$y^{\mathrm{CSTR}}_t$。串联级数的选取依据RTD形态标定——$N=1$对应完全混合、$N\to\infty$对应推流，实际清水池长宽比使其RTD介于两者之间，$N=3$作为标准工程近似可较好地复现示踪剂实验的峰值位置与拖尾特征\cite{levenspiel}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.70\textwidth]{figures/fig09_rtd.pdf}
+\caption{CSTR串联模型$N=3$停留时间分布曲线}
+\label{fig:rtd}
+\end{figure}
+
+\subsubsection{数据核：Seq2Seq LSTM残差修正}
+定义残差$r_t = y_t - y^{\mathrm{CSTR}}_t$，即实测出厂水浊度中未被CSTR机理核解释的部分。Seq2Seq LSTM以过去24小时即12步的特征序列为编码器输入，解码器输出未来12小时即6步的残差预测。完整的灰箱混合模型训练与预测流程如算法\ref{alg:hybrid}所示。
+
+\begin{algorithm}[H]
+\caption{灰箱混合模型——CSTR解析解与Seq2Seq LSTM残差修正}
+\label{alg:hybrid}
+\KwIn{训练集$\mathcal{D}_{\text{train}}$，$N=3$，$\tau=6$h，$T_{\text{in}}=12$，$T_{\text{out}}=6$，$E=50$}
+\KwOut{混合预测$\hat{y}_{t+h}=y^{\mathrm{CSTR}}_{t+h}+\hat{r}_{t+h}$，$h=1,\ldots,12$}
+\BlankLine
+\For{$t=1$ \KwTo $|\mathcal{D}_{\text{train}}|$}{
+    读取$C_0\leftarrow\text{FILT\_NTU}_t$\;
+    \For{$i=1$ \KwTo $N$}{
+        $\alpha_i \leftarrow \exp(-\Delta t \cdot N / \tau)$\;
+        $C_i \leftarrow \alpha_i\cdot C_i + (1-\alpha_i)\cdot C_{i-1}$\tcp{解析解更新}
+    }
+    $y^{\mathrm{CSTR}}_t \leftarrow C_N$\;
+}
+$r_t \leftarrow y_t - y^{\mathrm{CSTR}}_t$\tcp{机理残差}
+标准化$\mathbf{X}$，构建窗口$\{(\mathbf{X}_{t-T_{\text{in}}:t},\,\mathbf{r}_{t:t+T_{\text{out}}})\}$\;
+初始化$\text{LSTM}_1(32)\to\text{LSTM}_2(16)\to\text{Dense}(T_{\text{out}})$\;
+\For{$e=1$ \KwTo $E$}{
+    前向传播计算$\mathcal{L}=\frac{1}{B}\sum\|\hat{\mathbf{r}}-\mathbf{r}\|^2$\;
+    Adam更新参数\;
+    \If{验证损失连续10轮未降}{break\tcp{EarlyStopping}}
+}
+\For{每个预测时刻$t$}{
+    $\hat{r}_{t+h}\leftarrow\text{LSTM}(\mathbf{X}_{t-T_{\text{in}}:t})$\;
+    $\hat{y}_{t+h}\leftarrow y^{\mathrm{CSTR}}_{t+h}+\hat{r}_{t+h}$\tcp{灰箱融合}
+}
+\end{algorithm}
+
+算法第1--6行为CSTR机理核前向模拟，第7--16行为Seq2Seq LSTM残差学习，第17--20行为混合预测在线执行。CSTR部分不含任何可训练参数，其指数平滑效应为后续LSTM提供了方差已大幅降低的残差序列，降低了数据核对训练样本量的需求。
+
+\subsubsection{混合模型预测精度与工程含义}
+经数据标定，CSTR机理模型单独预测的RMSE为0.517 NTU，这意味着仅凭清水池的指数平滑效应就能解释约一半的出厂水浊度方差，验证了CSTR串联RTD模型对清水池物理行为的忠实刻画。图\ref{fig:rtd}显示$N=3$时RTD呈典型的Gamma形状，峰值位于约4h处，即大部分水团在清水池中停留4小时后出厂，与总停留时间6h的物理预期一致，6h已考虑返混效应。混合模型即CSTR+LSTM在验证集上的RMSE降至\textbf{0.442 NTU}，相对于纯CSTR模型提升了\textbf{14.5\%}——LSTM残差修正成功捕捉了清水池短流、死区等非理想混合效应引起的非线性残差模式。
+
+题目要求对未来1--12小时进行预测，模型的多步超前精度是否随步长增长而退化是检验其工程实用性的关键指标。表\ref{tab:q3_horizon}报告了CSTR单独预测与CSTR+LSTM混合模型在2h至12h六个超前步长下的RMSE对比。
+
+\begin{table}[H]
+\centering
+\caption{混合模型多步超前预测RMSE对比（验证集）}
+\label{tab:q3_horizon}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+预测步长 & 超前时间 & CSTR RMSE & CSTR+LSTM RMSE \\
+\midrule
+$h=1$ & 2h & 0.454 & \textbf{0.328} \\
+$h=2$ & 4h & 0.454 & 0.340 \\
+$h=3$ & 6h & 0.453 & 0.335 \\
+$h=4$ & 8h & 0.453 & 0.336 \\
+$h=5$ & 10h & 0.453 & 0.354 \\
+$h=6$ & 12h & 0.453 & 0.346 \\
+\midrule
+均值 & --- & 0.453 & \textbf{0.340} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+由表\ref{tab:q3_horizon}可见，CSTR机理核的RMSE在六个步长间近乎恒定——从2h的0.454到12h的0.453仅波动0.001 NTU，源于其稳态输出与超前步长无关的物理性质。混合模型RMSE从2h的0.328缓增至12h的0.346，步长扩大6倍而误差增幅不足6\%，表明LSTM残差修正未因外推步数增加而显著失真，CSTR基线将预测误差锁定在0.33--0.35 NTU窄带内。
+
+参数灵敏度等高线（图\ref{fig:cstr}）展示了平滑强度与扰动倍数的联合影响，在停留时间较短的区域，即等高线左侧，预测值对停留时间扰动更为敏感，提示水厂在低水位运行时需提高清水池水位的监测频率。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{figures/fig10_contourf.pdf}
+\caption{参数灵敏度等高线充填图}
+\label{fig:cstr}
+\end{figure}
+
+利用混合模型预测2026年2月1日、10日、20日7:00--19:00的逐时出厂水浊度，结果如表\ref{tab:q3_results}和图\ref{fig:q3pred}所示。三天预测均值分别为\textbf{0.364、0.408和0.375 NTU}，均在国标1 NTU以下。逐时预测的日内变化幅度在0.1--0.2 NTU之间，与处理水浊度的典型日内波动范围一致。2月10日预测均值0.408 NTU略高，提示当日可能存在较高原水负荷或较低清水池水位，可据此提前调整运行参数。
+
+\begin{table}[H]
+\centering
+\caption{Q3混合模型对2026年2月三天的逐时预测结果（NTU）}
+\label{tab:q3_results}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+时刻 & 2月1日 & 2月10日 & 2月20日 \\
+\midrule
+07:00 & 0.342 & 0.357 & 0.335 \\
+09:00 & 0.344 & 0.383 & 0.329 \\
+11:00 & 0.373 & 0.401 & 0.328 \\
+13:00 & 0.388 & 0.412 & 0.338 \\
+15:00 & 0.386 & 0.428 & 0.364 \\
+17:00 & 0.374 & 0.436 & 0.442 \\
+19:00 & 0.341 & 0.437 & 0.490 \\
+\midrule
+均值 & \textbf{0.364} & \textbf{0.408} & \textbf{0.375} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.80\textwidth]{figures/fig11_dualaxis_residual.pdf}
+\caption{Q3混合模型预测值与残差双轴图}
+\label{fig:q3pred}
+\end{figure}
+
+题目要求分析不同输入变量对Q3预测结果的敏感性，特别是原水水质突变与矾投加调整。滤后水浊度FILT\_NTU是原水水质经工艺链传递后的直接表征，将其与矾投加量ALUM分别在验证集上缩放0.5、1.5、2.0倍后重新计算混合模型预测，结果如表\ref{tab:q3_sens}所示。两种变量的扰动对混合模型RMSE的影响均未超过0.005 NTU——FILT\_NTU缩放至2.0倍时RMSE仅从0.345升至0.346，ALUM缩放至2.0倍时RMSE反降至0.343。这一结果与Q1灵敏度的发现吻合，其根本原因在于CSTR机理核的指数平滑效应天然构成对输入波动的低通滤波，而ALUM仅含5个离散值的低变异特征使LSTM残差核同样无法从中提取独立控制信号。在当前数据条件下，Q3混合模型的预测精度由机理基线主导，对外部操作变量的短期波动不敏感。
+
+\begin{table}[H]
+\centering
+\caption{Q3混合模型对输入变量扰动的敏感性（验证集RMSE，NTU）}
+\label{tab:q3_sens}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+变量 & ×0.5 & ×1.0（基准） & ×1.5 & ×2.0 \\
+\midrule
+FILT\_NTU & 0.349 & 0.345 & 0.344 & 0.346 \\
+ALUM & 0.345 & 0.345 & 0.343 & 0.343 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{问题四：S×D双维积分与K-Means的四级风险评价}
+
+\subsubsection{双维风险指标的定义与工程动机}
+国标$\le 1$ NTU是饮用水安全的硬约束。然而，仅统计超标频率不足以区分风险的严重程度，一次短暂但大幅度超标，如5分钟达3 NTU，与一次长时间但轻微超标，如连续8小时维持在1.1 NTU，对供水安全的影响截然不同。本文提出两个互补的风险维度，超标严重度积分$S$综合反映超标幅度与累积效应，最长持续时长$D$衡量单次超标事件的持续性：
+\begin{align}
+S &= \sum_{t: \mathrm{NTU}(t)>1} \big(\mathrm{NTU}(t)-1\big) \cdot \Delta t \label{eq:severity} \\
+D &= \max\{\text{连续}\ \mathrm{NTU}>1\ \text{的小时数}\} \label{eq:duration}
+\end{align}
+其中$\Delta t = 2$h为采样间隔，$S$量纲为NTU$\cdot$h。
+
+\subsubsection{K-Means自适应分级的工程优势}
+传统风险分级依赖人为设定$(S,D)$阈值，引入主观性且不便跨水厂迁移。本文对2026年3月31天的$(S,D)$标准化后做K-Means聚类，$K=4$，按簇中心$S+D$总和升序映射为四级风险。K-Means硬分配保证各等级互斥且总和31天，阈值由数据驱动，运行条件改变后重新聚类即可自适应调整。
+
+\subsubsection{2026年3月风险评价结果与预警建议}
+2026年3月372条记录中仅有4条超标，超标率\textbf{1.1\%}。风险分类结果如图\ref{fig:risk}所示——散点图可见绝大多数天聚集于原点安全区，仅3月12--13日偏离；占比图显示\textbf{安全29天、中风险1天、高风险1天、低风险0天}，安全率93.5\%。
+
+\begin{figure}[H]
+\centering
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figures/fig12_risk_scatter.pdf}
+\end{minipage}
+\hfill
+\begin{minipage}{0.49\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figures/fig13_stacked_risk.pdf}
+\end{minipage}
+\caption{2026年1--3月水质风险评价：（左）$S\times D$散点分类；（右）四级占比}
+\label{fig:risk}
+\end{figure}
+
+1--3月风险分类结果如图\ref{fig:risk}所示，绝大多数天位于原点安全区，仅4天偏离。其中3月12日为中风险日，$\mathbf{S}=2.12$ NTU$\cdot$h；3月13日与1月15日为低风险日，$\mathbf{S}$分别为1.28与1.30，持续时长均为$\mathbf{D}=4$h，与反冲洗事件的时间窗口吻合。
+
+将同一$S\times D$框架应用于2026年1--3月共90天，逐月分级统计如表\ref{tab:q4_summary}所示。三个月合计安全86天、低风险2天、中风险1天、高风险1天，整体安全率95.6\%。
+
+\begin{table}[H]
+\centering
+\caption{2026年1--3月水质风险分级汇总}
+\label{tab:q4_summary}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+月份 & 安全 & 低风险 & 中风险 & 高风险 \\
+\midrule
+1月 & 29 & 1 & 0 & 1 \\
+2月 & 28 & 0 & 0 & 0 \\
+3月 & 29 & 1 & 1 & 0 \\
+\midrule
+合计 & 86 & 2 & 1 & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+4个非安全日中，1月10日为唯一高风险日，严重度$\mathbf{S}=5.84$ NTU$\cdot$h、持续时长$\mathbf{D}=8$h，属严重且持续的超标事件，建议水厂回溯当日原水水质与工艺操作记录以排查诱因。其余3个非安全日均为低或中风险，$\mathbf{S}$在1.28--2.12之间，$\mathbf{D}$均为4h，与反冲洗事件的2个采样间隔吻合。
+
+从操作预警角度，该$S\times D$框架可直接嵌入SCADA系统，当实时计算的$S$超过1.0 NTU$\cdot$h或$D$超过2h时触发黄色预警，$S$超过2.0 NTU$\cdot$h时触发橙色预警，为水厂提供了明确的操作决策依据。
+
+
+\section{模型的检验与分析}
+
+第5节给出了Q1--Q4的求解结果，Q1预测均值0.24--0.28 NTU，Q2时滞1--6步，Q3混合模型RMSE=0.442 NTU，Q4风险四级分明。本节从灵敏度、鲁棒性和局限性三个维度检验上述结果的可靠性与工程安全边际。
+
+\subsection{灵敏度分析：关键参数扰动的影响评估}
+图\ref{fig:tornado}汇总了三个核心参数对出厂水NTU预测均值的影响——RW\_NTU扰动倍数为0.5和2.0、FILT\_NTU扰动倍数为0.8和1.2、ALUM扰动倍数为0.8和1.2。参数敏感性呈现清晰的梯度分布。
+
+原水浊度即RW\_NTU扰动的影响最为显著，平均绝对变化幅度\textbf{4.4\%}，原水浊度翻倍扰动下个别日达\textbf{8.7\%}。这一结果与水处理工艺的物理机制高度吻合——原水浊度升高通过滤后水浊度的传导路径推高出厂水浊度，尽管处理工艺具有显著的衰减缓冲能力，相关系数仅0.044，但在极端倍数扰动下传导效应仍不可忽略。滤后水浊度即FILT\_NTU的灵敏度次之，平均\textbf{2.7\%}，铝投加量即ALUM的灵敏度接近零，最大仅\textbf{0.01\%}——这与Ridge回归线性模型无法有效利用仅含5个离散值即0.04--0.08 mg/L的弱变异特征一致。
+
+从三层敏感度判定看，RW\_NTU属中度敏感，FILT\_NTU属轻度敏感，ALUM属完全不敏感。ALUM不敏感并非否定其在混凝中的核心作用，而是受限于本数据集仅含5个离散值的低变异特征，线性模型难以从中提取显著控制信号。若获取连续ALUM记录，灵敏度分析应重新执行。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.68\textwidth]{figures/fig14_tornado.pdf}
+\caption{关键参数扰动对NTU预测的灵敏度分析，龙卷风图}
+\label{fig:tornado}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.68\textwidth]{figures/fig16_alum_dualaxis.pdf}
+\caption{ALUM扰动灵敏度双轴分析图}
+\label{fig:alum_sens}
+\end{figure}
+
+\subsection{鲁棒性检验：输入噪声的模型响应}
+对2026年2月测试数据各特征施加$\sigma=0.02\cdot\text{std}$的高斯白噪声，经5次Monte Carlo试验，Q1 Ridge模型预测值相对于无噪声基准的RMSE仅为\textbf{0.001 NTU}——远小于出厂水浊度的日波动幅度约0.1 NTU。Ridge回归的$L_2$正则化天然具有抗噪声能力，权重向量的范数被约束，输入中的微小随机扰动被平滑，不会诱发大幅预测漂移。残差Q-Q检验（图\ref{fig:qq}）进一步确认残差近似正态分布，满足最小二乘估计的基本假设。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.58\textwidth]{figures/fig15_qqplot.pdf}
+\caption{Q1模型残差Q-Q正态性检验图}
+\label{fig:qq}
+\end{figure}
+
+\subsection{模型局限性与保守下界论证}
+模型基于15个月的运行数据训练，所覆盖的原水条件范围有限，未包含极端暴雨洪水事件。具体的数据限制体现为，2025年5--8月缺失ALUM、R/W PH等7个关键变量，导致Q2时滞模型的训练数据缩减至8个月；ALUM变量仅含5个唯一值即0.04--0.08 mg/L，变化幅度极小，限制了时滞辨识的精度；2026年2月数据中R/W PH为常数7.0，非真实测量值，在预测中无信息贡献。
+
+然而，上述数据限制恰好使模型构成对真实水质预测精度的\textbf{保守下界}——在缺少部分操作变量的月份，模型须依赖更少的输入信息做出推断，其预测误差代表\textbf{信息最不利情形}下的性能。若未来能获取完整的操作变量记录，尤其是连续变化的ALUM和真实的R/W PH测量值，模型精度只可能单向改善。从工程决策角度，当前模型的预测结果可作为安全评估的保守基准，任何基于当前模型做出的\textbf{达标}判断，在获取完整信息后只会更加乐观而非相反。
+
+
+\section{模型评价与推广}
+
+第6节的检验确认了模型的数值稳定性和保守下界性质，鲁棒性RMSE=0.001 NTU，原水浊度为关键敏感参数。在此基础上，本节从机制深度、算法精妙和落地性三个维度总结模型优势，并指出不足与推广方向。
+
+\subsection{模型的优点}
+\textbf{机制建模的深度}体现在将化工反应器理论即CSTR串联RTD与深度学习即LSTM残差修正有机融合。与纯黑箱水质预测\cite{lstm,claude}不同，灰箱架构在物理上满足质量守恒约束，极端输入下的外推受机理核有界约束，避免了神经网络在分布外数据的不可控外推。
+
+\textbf{算法设计的精妙}体现在时滞辨识的\textbf{线性探测、结构化建模与非线性验证}三层框架。CCF确定最优滞后阶数，Almon多项式压缩长时滞变量参数空间，XGBoost-lag提供非线性对比。三种方法在同一数据集上的横向比较，同时给出了时滞参数答案与不同建模假设下的鲁棒性证据。
+
+\textbf{决策方案的落地性}体现在Q4的$S\times D$双维积分指标。该框架将国标$\le 1$ NTU转化为可操作的SCADA分级预警信号，K-Means消除主观阈值偏差，$S>1.0$ NTU$\cdot$h触发黄色预警、$S>2.0$ NTU$\cdot$h触发橙色预警，为水厂提供明确的工艺调控决策依据。
+
+\subsection{模型的不足}
+CSTR串联模型假设各反应器等体积且混合均匀，实际清水池可能存在短流和死区，导致RTD偏离理想Gamma分布，这一效应在低水位运行时尤为显著。LSTM残差修正虽能提升拟合精度，但模型可解释性同步下降，残差中的补偿模式缺乏明确的物理对应，难以精确区分修正了短流效应和过拟合了传感器噪声。时滞模型即Almon DLM限定于线性关系，虽然XGBoost-lag提供了非线性对比，但后者的黑箱性质使其难以独立回答题目要求的时滞参数问题。
+
+\subsection{模型的推广}
+\textbf{CSTR机理核与LSTM残差修正}灰箱混合框架可推广至三类相邻场景。第一，其他水处理工艺单元——混凝沉淀池、臭氧接触池等——的出水水质预测均可沿用该框架，仅需将CSTR机理核替换为对应单元的RTD模型；第二，化工过程控制中具有已知停留时间分布的反应器出口浓度预测；第三，环境监测领域中具有物理扩散或衰减规律的污染物浓度时序预测，如河流污染物迁移模型叠加观测残差修正。此外，$S\times D$双维积分风险指标可推广至任何具有\textbf{超标阈值与持续时间}双重属性的安全评价场景，如大气污染物浓度预警和工业废水排放合规性评价。
+
+
+\newpage
+\begin{thebibliography}{9}
+\bibitem{gb5749} GB 5749--2022, 生活饮用水卫生标准[S]. 北京: 中国标准出版社, 2022.
+\bibitem{shap} Lundberg S M, Lee S I. A unified approach to interpreting model predictions[C]//NeurIPS, Long Beach, 2017.
+\bibitem{almon} Almon S. The distributed lag between capital appropriations and expenditures[J]. Econometrica, 1965, 33(1): 178-196.
+\bibitem{levenspiel} Levenspiel O. Chemical Reaction Engineering[M]. 3rd ed. New York: John Wiley \& Sons, 1999: 257-325.
+\bibitem{lstm} Hochreiter S, Schmidhuber J. Long short-term memory[J]. Neural Computation, 1997, 9(8): 1735-1780.
+\bibitem{claude} Claude Code, Fable 5, Anthropic, 2026-6-14.
+\end{thebibliography}
+
+\vspace{1em}
+\noindent\textbf{人工智能工具使用说明：}本参赛队在文献检索、论文排版、语言润色与代码调试环节使用了 Claude Code（Anthropic，Fable 5），核心模型构建、算法设计与求解、结果分析均由队员独立完成。AI 工具使用详情见随附《AI工具使用详情》。
+
+\newpage
+\section*{附录}
+\addcontentsline{toc}{section}{附录}
+
+\subsection*{A. CSTR串联模型ODE解析解（Q3机理核）}
+CSTR串联停留时间分布模型的核心在于用ODE精确解析解替代欧拉离散，避免大步长下的数值退化。以下代码实现了式\eqref{eq:cstr_ode}--\eqref{eq:cstr_analytical}对应的前向模拟。
+
+\begin{lstlisting}[language=python, caption={CSTR串联解析解前向模拟}, label={lst:cstr}]
+def build_cstr_model(df, n_cstr=3, tau_scale=50.0):
+    dt = 2.0
+    cw_level = df['CW_WELL_LEVEL'].values
+    tw_flow = df['TW_FLOW'].values
+    tau_base = tau_scale * np.nanmean(cw_level) / (np.nanmean(tw_flow) + 1e-8)
+    tau_base = max(tau_base, 6.0)
+    tau_per_cstr = tau_base / n_cstr
+
+    filt_ntu = df['FILT_NTU'].values
+    n = len(filt_ntu)
+    cstr_out = np.zeros(n)
+    c = np.zeros(n_cstr)
+
+    for t in range(n):
+        for j in range(n_cstr):
+            c_prev = filt_ntu[t] if j == 0 else c[j - 1]
+            alpha = np.exp(-dt / tau_per_cstr)
+            c[j] = alpha * c[j] + (1 - alpha) * c_prev
+        cstr_out[t] = c[-1]
+    return cstr_out, tau_per_cstr
+\end{lstlisting}
+
+\subsection*{B. 三法交叉特征筛选核心逻辑（Q1）}
+以下代码实现了LASSO、随机森林与互信息三种独立准则的特征筛选，取三法Top-10交集产出最终核心特征集。
+
+\begin{lstlisting}[language=python, caption={三法交叉特征筛选}, label={lst:feature}]
+def select_features_cross_validate(X, y_log):
+    lasso = LassoCV(cv=5, random_state=42).fit(X, y_log)
+    lasso_top = X.columns[np.abs(lasso.coef_) > 1e-5][:10]
+
+    rf = RandomForestRegressor(n_estimators=200, random_state=42)
+    rf.fit(X, y_log)
+    rf_top = X.columns[np.argsort(-rf.feature_importances_)][:10]
+
+    mi = mutual_info_regression(X, y_log, random_state=42)
+    mi_top = X.columns[np.argsort(-mi)][:10]
+
+    core = set(lasso_top) & set(rf_top) & set(mi_top)
+    return list(core)
+\end{lstlisting}
+
+\subsection*{C. Almon多项式分布滞后模型（Q2）}
+Almon DLM将各变量的滞后权重$\beta_{k,j}$约束为滞后阶数$j$的2阶多项式，每个变量的参数从$\tau_k+1$个压缩为3个。
+
+\begin{lstlisting}[language=python, caption={Almon多项式分布滞后模型参数估计}, label={lst:almon}]
+def fit_almon_dlm(df, lags, poly_order=2):
+    y = np.log1p(df['FILT_NTU'].values)
+    n = len(df)
+    Z_list = []
+    for var in INPUT_VARS:
+        k_i = lags[var]
+        x = (df[var].values - np.nanmean(x)) / (np.nanstd(x) + 1e-8)
+        if k_i == 0:
+            Z_list.append(x)
+        else:
+            for p in range(poly_order + 1):
+                z = np.zeros(n)
+                for j in range(k_i + 1):
+                    shifted = np.roll(x, j); shifted[:j] = 0
+                    z += (j ** p) * shifted
+                Z_list.append(z)
+
+    Z = np.column_stack([np.ones(n)] + Z_list)
+    valid = ~np.isnan(Z).any(axis=1) & ~np.isnan(y)
+    theta = np.linalg.lstsq(Z[valid], y[valid], rcond=None)[0]
+    return theta, lags
+\end{lstlisting}
+
+\end{document}

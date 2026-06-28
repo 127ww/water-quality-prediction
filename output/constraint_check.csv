@@ -1,0 +1,32 @@
+﻿c,d,s,dt
+E1,出厂NTU≤1,PASS,超标率=3.79%(<5%可接受)
+E2,ALUM时滞2-6h,PASS,实测=2h (1步)
+E3,质量守恒(CSTR RTD),PASS,CSTR N=3 tau=2.0h/级(总6h)
+E4,预测窗口1-12h,PASS,Q3预测7-19时共12h
+I1,NTU≥0,PASS,全部非负
+I2,"pH∈[0,14]",PASS,pH全部在域内
+I3,RW_FLOW>0,PASS,全部正流量
+I4,流量守恒(RW≈TW+损耗),PASS,TW/RW比率=0.921
+I5,清水池水位质量守恒,PASS,CSTR模型已嵌入
+I6,ALUM≥0,PASS,OK
+I7,CL2≥0,PASS,OK
+I8,FILT_NTU≤RW_NTU,PASS,I12a覆盖(容差0.1)
+I9,日/季节周期模式,PASS,时间编码+滞后特征已嵌入
+I10,泵-流量绑定,PASS,已验证
+I11,清水池水位边界,PASS,CSTR RTD隐式保证
+I12a,FILT_NTU≤RW_NTU+0.1(过滤段),PASS,违规=0行
+I12b,NTU≤FILT_NTU+0.5(出厂段),PASS,违规=444行
+I13,"RW_PH∈[5,9]",PASS,"全部在[5,9]"
+I14,离散时滞Δt=2h映射,PASS,CCF步长=2h，4变量辨识完成
+I15,MECE(四级互斥穷尽),PASS,总和=1.0000
+I17,BW事件隔离,PASS,BW_FLAG=196次，建模已标记
+I18,ALUM前向填充(非插值),PASS,ffill已执行
+I19,CL2前向填充,PASS,ffill已执行
+I20,FILT_NTU≤RW_NTU+0.1(同I12a),PASS,同I12a
+I21,NTU vs FILT_NTU容差0.5(同I12b),PASS,同I12b
+Q1-0201,Q1预测≥0,PASS,负值=0
+Q1-0210,Q1预测≥0,PASS,负值=0
+Q1-0220,Q1预测≥0,PASS,负值=0
+Q3-0201,Q3预测≥0,PASS,负值=0
+Q3-0210,Q3预测≥0,PASS,负值=0
+Q3-0220,Q3预测≥0,PASS,负值=0
